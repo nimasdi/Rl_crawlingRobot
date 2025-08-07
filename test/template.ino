@@ -246,12 +246,12 @@ void setup()
   healthCheck();
 }
 
-#define SERVO_UP_STATES 7
-#define SERVO_DOWN_STATES 5
+#define SERVO_UP_STATES 12
+#define SERVO_DOWN_STATES 10
 #define ACTIONS_NUM (SERVO_UP_STATES + SERVO_DOWN_STATES)
 
-const int servo_up_angles[SERVO_UP_STATES] = {180, 162, 144, 126, 108, 90, 72};
-const int servo_down_angles[SERVO_DOWN_STATES] = {0, 22, 44, 66, 88};
+const int servo_up_angles[SERVO_UP_STATES] = {180, 170 , 160 , 150 , 140 , 130 , 120 , 110 , 100 , 90 , 80 , 70};
+const int servo_down_angles[SERVO_DOWN_STATES] = {0, 10 , 20 , 30 , 40 , 50, 60 , 70, 80, 90};
 
 int get_current_state()
 {
@@ -312,7 +312,7 @@ int choose_action(int state)
   {
     Serial.println("Action: Exploiting (best)");
     int best_action = 0;
-    for (int i = 1; i < ACTIONS_NUM; i++)
+    for (int i = 0; i < ACTIONS_NUM; i++)
     {
       if (q_table[state][i] > q_table[state][best_action])
       {
@@ -370,39 +370,66 @@ void update_q_table(int state, int action, float reward, int new_state)
 bool done_exploration = false;
 bool done_training = false;
 
-void explore_all_states(int exploreation_steps = 3)
+void explore_all_states(int exploration_steps = 3)
 {
-  Serial.println("Starting exploration phase - visiting all states...");
+  Serial.println("Starting exploration phase...");
   lcd.clear();
   lcd.print("Exploring States");
 
   initialize_q_table();
   Serial.println("Q-table initialized for exploration");
 
-  for (int i = 0; i < exploreation_steps; i++)
+  for (int step = 0; step < exploration_steps; step++)
   {
+    moveServoSmooth(servoup, servoup.read(), 180);
+    moveServoSmooth(servodown, servodown.read(), 0);
+    delay(200);
+
     for (int up_idx = 0; up_idx < SERVO_UP_STATES; up_idx++)
     {
       for (int down_idx = 0; down_idx < SERVO_DOWN_STATES; down_idx++)
       {
-        int current_state = get_current_state();
-        float distance_before = getDistance();
-        
-        Serial.printf("Moving to state: up_idx=%d, down_idx=%d\n", up_idx, down_idx);
+        // UP servo 
+        int state_before_up_move = get_current_state();
+        int current_up_angle = servoup.read();
+        int target_up_angle = servo_up_angles[up_idx];
 
-        moveServoSmooth(servoup, servoup.read(), servo_up_angles[up_idx]);
-        moveServoSmooth(servodown, servodown.read(), servo_down_angles[down_idx]);
+        if (current_up_angle != target_up_angle) {
+            float distance_before = getDistance();
+            
+            int action_to_perform = up_idx; 
+            
+            perform_action(action_to_perform); 
+            delay(50); 
+            
+            float distance_after = getDistance();
+            int new_state = get_current_state();
+            float reward = max(0.0f, calculate_reward(distance_before, distance_after));
 
-        float distance_after = getDistance();
-        int new_state = get_current_state();
-        
-        float reward = calculate_reward(distance_before, distance_after); 
-        update_q_table(current_state, 0, reward, new_state);
-        
-        Serial.printf("Exploration - State %d->%d: Distance = %.2f cm, Reward = %.2f\n", 
-                      current_state, new_state, distance_after, reward);
+            update_q_table(state_before_up_move, action_to_perform, reward, new_state);
+            Serial.printf("Explore (UP): s:%d, a:%d -> s':%d, r:%.1f\n", state_before_up_move, action_to_perform, new_state, reward);
+        }
 
-        delay(200);
+        // DOWN servo
+        int state_before_down_move = get_current_state();
+        int current_down_angle = servodown.read();
+        int target_down_angle = servo_down_angles[down_idx];
+
+        if (current_down_angle != target_down_angle) {
+            float distance_before = getDistance();
+
+            int action_to_perform = SERVO_UP_STATES + down_idx;
+
+            perform_action(action_to_perform);
+            delay(50); 
+
+            float distance_after = getDistance();
+            int new_state = get_current_state();
+            float reward = max(0.0f, calculate_reward(distance_before, distance_after));
+
+            update_q_table(state_before_down_move, action_to_perform, reward, new_state);
+            Serial.printf("Explore (DOWN): s:%d, a:%d -> s':%d, r:%.1f\n", state_before_down_move, action_to_perform, new_state, reward);
+        }
       }
     }
   }
@@ -470,7 +497,7 @@ void do_action_after_training()
 
   int best_action = 0;
   float best_q_value = q_table[state][0];
-  for (int i = 1; i < ACTIONS_NUM; i++)
+  for (int i = 0; i < ACTIONS_NUM; i++)
   {
     if (q_table[state][i] > best_q_value)
     {
