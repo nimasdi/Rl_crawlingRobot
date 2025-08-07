@@ -325,21 +325,21 @@ int choose_action(int state)
 
 int calculate_reward(float distance_before, float distance_after)
 {
-  if (distance_after < 0)
-  {
-    return -100;
-  }
 
-  if (distance_after < distance_before)
+  if (distance_after > 30)
   {
-    return 25;
+    return 100;
   }
-  else if (distance_after > distance_before)
-  {
-    return -10;
+  else{
+    if (distance_after > distance_before)
+    {
+      return 25;
+    }
+    else
+    {
+      return -20;
+    }
   }
-
-  return -2;
 }
 
 void initialize_q_table()
@@ -348,7 +348,7 @@ void initialize_q_table()
   {
     for (int j = 0; j < ACTIONS_NUM; j++)
     {
-      q_table[i][j] = random(-100, 100) / 100.0;
+      q_table[i][j] = 0;
     }
   }
 }
@@ -379,7 +379,7 @@ void explore_all_states(int exploreation_steps = 3)
   initialize_q_table();
   Serial.println("Q-table initialized for exploration");
 
-  for (int i = 0; i < exploration_steps; i++)
+  for (int i = 0; i < exploreation_steps; i++)
   {
     for (int up_idx = 0; up_idx < SERVO_UP_STATES; up_idx++)
     {
