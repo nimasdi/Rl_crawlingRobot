@@ -232,10 +232,10 @@ int current_state = 0;
 struct Posture { uint8_t down; uint8_t up; }; 
 std::vector<Posture> states = {
   {180, 0},
-  {130, 50},
-  {140, 60},
-  {120 , 70},
-  {100 , 30}
+  {120, 60},
+  {130, 70},
+  {110 , 80},
+  {90 , 40}
 };
 const int N_STATES = 5; // must match states.size()
 
