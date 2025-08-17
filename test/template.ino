@@ -231,11 +231,11 @@ int current_state = 0;
 // ======== Discrete “states” (servo postures) ========
 struct Posture { uint8_t down; uint8_t up; }; 
 std::vector<Posture> states = {
-  {0, 180},
-  {50, 130},
-  {60, 140},
-  {70 , 120},
-  {30 , 100}
+  {180, 0},
+  {130, 50},
+  {140, 60},
+  {120 , 70},
+  {100 , 30}
 };
 const int N_STATES = 5; // must match states.size()
 
