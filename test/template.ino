@@ -232,10 +232,12 @@ int current_state = 0;
 struct Posture { uint8_t down; uint8_t up; }; 
 std::vector<Posture> states = {
   {0, 180},
-  {66, 144},
-  {88, 126}
+  {50, 130},
+  {60, 140},
+  {70 , 120},
+  {30 , 100}
 };
-const int N_STATES = 3; // must match states.size()
+const int N_STATES = 5; // must match states.size()
 
 // Q-table: rows = states (s), cols = actions (target posture index a)
 std::vector<std::vector<float>> Q_table(N_STATES, std::vector<float>(N_STATES, 0.0f));
@@ -304,7 +306,7 @@ void train_one_episode() {
 
     // brief UI updatea
     lcd.clear();
-    lcd.print("Ep step "); lcd.print(t);
+    lcd.print("action "); lcd.print(a);
     lcd.setCursor(0,1);
     lcd.print("r="); lcd.print(r, 2);
   }
