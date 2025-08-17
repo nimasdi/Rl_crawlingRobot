@@ -7,7 +7,6 @@
 #include <EEPROM.h>
 #include <ESPmDNS.h>
 // All other libraries are included in ESP32 Dev Module by Espressif Systems
-
 #include <vector>
 #include <algorithm>
 #include <cmath>
@@ -213,14 +212,14 @@ void moveServoSmooth(Servo &servo, int from, int to, int stepDelay = 10)
   }
 }
 
-static const float ALPHA   = 0.5f;   // learning rate
+static const float ALPHA   = 0.6f;   // learning rate
 static const float GAMMA   = 0.9f;   // discount
 static float EPSILON       = 0.8f;   // exploration
 static const float EPS_MIN = 0.1f;   // min epsilon
 static const float EPS_DEC = 0.995f; // epsilon decay per episode
 
 
-static const int EPISODES      = 60;
+static const int EPISODES      = 10;
 static const int STEPS_PER_EP  = 15;
 
 bool do_training = true;
@@ -231,6 +230,18 @@ int current_state = 0;
 // ======== Discrete “states” (servo postures) ========
 struct Posture { uint8_t down; uint8_t up; }; 
 std::vector<Posture> states = {
+  {180, 90},
+  {180, 13},
+  {170, 90},
+  {170, 60},
+  {170, 30},
+  {160, 90},
+  {160, 20},
+  {140, 90},
+  {140, 50},
+  {120, 50},
+  {120, 80},
+  {110, 90},
   {110 , 80},
   {110, 90},
   {90 , 40}, 
@@ -242,12 +253,23 @@ std::vector<Posture> states = {
   {80, 50},
   {80, 60},
   {70, 30},
-  {70, 40}
+  {70, 40},
+  {70, 50},
+  {60, 20},
+  {60, 30},
+  {60, 40},
+  {50, 10},
+  {50, 20},
+  {50, 30},
+  {50, 40},
+  {40, 10},
+  {40, 20},
+  {40, 30}
 };
-const int N_STATES = 12; // must match states.size()
+const int N_STATES = states.size(); 
 
 // Q-table: rows = states (s), cols = actions (target posture index a)
-std::vector<std::vector<float>> Q_table(N_STATES, std::vector<float>(N_STATES, 0.0f));
+vector<vector<float>> Q_table(N_STATES, vector<float>(N_STATES, 0.0f));
 
 
 void moveToPosture(int to_idx) {
@@ -269,12 +291,12 @@ float reward_fn(float dist_now, float dist_later) {
   return (dist_later - dist_now) * 2.5f; // bigger increase in distance = better
 }
 
-int argmax(const std::vector<float>& v) {
-  return (int)std::distance(v.begin(), std::max_element(v.begin(), v.end()));
+int argmax(const vector<float>& v) {
+  return (int)distance(v.begin(), max_element(v.begin(), v.end()));
 }
 
-float maxval(const std::vector<float>& v) {
-  return *std::max_element(v.begin(), v.end());
+float maxval(const vector<float>& v) {
+  return *max_element(v.begin(), v.end());
 }
 
 int epsilon_greedy_action(int s) {
@@ -324,7 +346,7 @@ void doTraining() {
   for (int ep = 0; ep < EPISODES; ++ep) {
     train_one_episode();
     // decay epsilon
-    EPSILON = std::max(EPS_MIN, EPSILON * EPS_DEC);
+    EPSILON = max(EPS_MIN, EPSILON * EPS_DEC);
     delay(50);
   }
   Serial.println("=== TRAINING DONE ===");
