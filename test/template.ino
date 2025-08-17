@@ -231,25 +231,31 @@ int current_state = 0;
 // ======== Discrete “states” (servo postures) ========
 struct Posture { uint8_t down; uint8_t up; }; 
 std::vector<Posture> states = {
-  {180, 0},
-  {120, 60},
-  {130, 70},
   {110 , 80},
-  {90 , 40}
+  {110, 90},
+  {90 , 40}, 
+  {90, 50},
+  {90, 60}, 
+  {90, 70},
+  {90, 80},
+  {80, 40},
+  {80, 50},
+  {80, 60},
+  {70, 30},
+  {70, 40}
 };
-const int N_STATES = 5; // must match states.size()
+const int N_STATES = 12; // must match states.size()
 
 // Q-table: rows = states (s), cols = actions (target posture index a)
 std::vector<std::vector<float>> Q_table(N_STATES, std::vector<float>(N_STATES, 0.0f));
 
-std::vector<std::vector<float>> Q_table(N_STATES, std::vector<float>(N_STATES, 0.0f));
 
 void moveToPosture(int to_idx) {
   Posture from = states[current_state];
   Posture to   = states[to_idx];
   moveServoSmooth(servoup, from.down, to.down);
   moveServoSmooth(servodown,   from.up,   to.up);
-  delay(50ms);
+  delay(100);
   current_state = to_idx; 
 }
 
