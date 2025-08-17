@@ -1,39 +1,48 @@
-#include <ESP32Servo.h>
+#include <ESP32Servo.h> // ESP32Servo by Kevin Harrington, John K. Bennet
 #include <Wire.h>
-#include <LiquidCrystal_I2C.h>
-#include <NewPing.h>
+#include <LiquidCrystal_I2C.h> // Adafruit LiquidCrystal by Adafruit
+#include <NewPing.h>           // NewPing by Tim Eckel
 #include <WiFi.h>
 #include <ArduinoOTA.h>
 #include <EEPROM.h>
 #include <ESPmDNS.h>
+// All other libraries are included in ESP32 Dev Module by Espressif Systems
 
-#define EEPROM_SIZE 1
-#define ROBOT_NUM_ADDR 0
+#include <vector>
+#include <algorithm>
+#include <cmath>
 
+using namespace std;
+
+// EEPROM settings
+#define EEPROM_SIZE 1    // 1 byte to store robot number (1-8)
+#define ROBOT_NUM_ADDR 0 // EEPROM address for robot number
+
+// Base names for AP and OTA
 const char *base_ssid = "ESP32-AP-";
 const char *base_ota_hostname = "ESP32-OTA-";
-const char *ap_password = "12345678";
+const char *ap_password = "12345678"; // Common password for all APs
 
+// Pin definitions
 const int triggerPin = 5;
 const int echoPin = 17;
 const int control_servo_down = 32;
 const int control_servo_up = 33;
-#define MAX_DISTANCE 200
+#define MAX_DISTANCE 200 // Maximum distance to check in cm
 
+// Objects
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 Servo servodown;
 Servo servoup;
-NewPing sonar(triggerPin, echoPin, MAX_DISTANCE);
+NewPing sonar(triggerPin, echoPin, MAX_DISTANCE); // NewPing instance
 
+// Global variables for dynamic AP and OTA names
 char ssid[32];
 char ota_hostname[32];
 uint8_t robot_number = 0;
 
+// FreeRTOS task handle for OTA
 TaskHandle_t otaTaskHandle = NULL;
-
-#define EPSILON 0.3
-#define ALPHA 0.3
-#define GAMMA 0.9
 
 void saveRobotNumber(uint8_t number)
 {
@@ -91,49 +100,49 @@ void setup_ota()
 
   ArduinoOTA.onStart([]()
                      {
-    Serial.println("OTA Start");
-    lcd.clear();
-    lcd.print("OTA Update Start"); });
+        Serial.println("OTA Start");
+        lcd.clear();
+        lcd.print("OTA Update Start"); });
   ArduinoOTA.onEnd([]()
                    {
-    Serial.println("\nOTA End");
-    lcd.clear();
-    lcd.print("OTA Update Done"); });
+        Serial.println("\nOTA End");
+        lcd.clear();
+        lcd.print("OTA Update Done"); });
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total)
                         {
-    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
-    lcd.clear();
-    lcd.print("OTA Progress: ");
-    lcd.setCursor(0, 1);
-    lcd.print((progress / (total / 100)));
-    lcd.print("%"); });
+        Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+        lcd.clear();
+        lcd.print("OTA Progress: ");
+        lcd.setCursor(0, 1);
+        lcd.print((progress / (total / 100)));
+        lcd.print("%"); });
   ArduinoOTA.onError([](ota_error_t error)
                      {
-    Serial.printf("Error[%u]: ", error);
-    lcd.clear();
-    lcd.print("OTA Error");
-    if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-    else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-    else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-    else if (error == OTA_END_ERROR) Serial.println("End Failed"); });
+        Serial.printf("Error[%u]: ", error);
+        lcd.clear();
+        lcd.print("OTA Error");
+        if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+        else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+        else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+        else if (error == OTA_END_ERROR) Serial.println("End Failed"); });
   ArduinoOTA.begin();
   Serial.println("OTA Ready");
   Serial.print("OTA Hostname: ");
   Serial.println(ota_hostname);
 }
-
+// OTA task to run asynchronously
 void otaTask(void *parameter)
 {
   for (;;)
   {
-    ArduinoOTA.handle();
-    vTaskDelay(10 / portTICK_PERIOD_MS);
+    ArduinoOTA.handle();                 // Handle OTA updates
+    vTaskDelay(10 / portTICK_PERIOD_MS); // Yield for 10ms
   }
 }
 
 float getDistance()
 {
-  float distance = sonar.ping_cm();
+  float distance = sonar.ping_cm(); // Get distance in cm
   if (distance == 0)
   {
     Serial.println("Warning: No echo received from SRF module.");
@@ -147,11 +156,12 @@ float getDistance()
 
 void healthCheck()
 {
-
+  // 1. Print Health Check on LCD
   lcd.clear();
   lcd.print("Health Check Start");
   delay(1000);
 
+  // 2. Get distance and print it
   float distance = getDistance();
   lcd.clear();
   if (distance < 0)
@@ -169,13 +179,14 @@ void healthCheck()
   servodown.write(90);
   servoup.write(90);
   delay(1000);
-
+  // 3. Move servos back to initial position
   servodown.write(0);
   servoup.write(180);
   lcd.clear();
   lcd.print("Servos Reset");
   delay(1000);
 
+  // 4. Print completion message
   lcd.clear();
   lcd.print("Health Check Done");
   delay(1500);
@@ -202,29 +213,169 @@ void moveServoSmooth(Servo &servo, int from, int to, int stepDelay = 10)
   }
 }
 
+static const float ALPHA   = 0.5f;   // learning rate
+static const float GAMMA   = 0.9f;   // discount
+static float EPSILON       = 0.8f;   // exploration
+static const float EPS_MIN = 0.1f;   // min epsilon
+static const float EPS_DEC = 0.995f; // epsilon decay per episode
+
+
+static const int EPISODES      = 60;
+static const int STEPS_PER_EP  = 15;
+
+bool do_training = true;
+
+int current_state = 0;
+
+
+// ======== Discrete “states” (servo postures) ========
+struct Posture { uint8_t down; uint8_t up; };
+std::vector<Posture> states = {
+  {0, 180},
+  {66, 144},
+  {88, 126}
+};
+const int N_STATES = 3; // must match states.size()
+
+// Q-table: rows = states (s), cols = actions (target posture index a)
+std::vector<std::vector<float>> Q_table(N_STATES, std::vector<float>(N_STATES, 0.0f));
+
+std::vector<std::vector<float>> Q_table(N_STATES, std::vector<float>(N_STATES, 0.0f));
+
+void moveToPosture(int to_idx) {
+  Posture from = states[current_state];
+  Posture to   = states[to_idx];
+  moveServoSmooth(servoup, from.down, to.down);
+  moveServoSmooth(servodown,   from.up,   to.up);
+  delay(SETTLE_MS);
+  current_state = to_idx;
+}
+
+float reward_fn(float dist_now, float dist_later) {
+  if (dist_now < 0 || dist_later < 0) { // invalid read
+    return -2.0f; // penalize sensor failure
+  }
+  if (fabs(dist_later - dist_now) < 1e-3) {
+    return -1.0f; // penalize no change
+  }
+  return (dist_later - dist_now) * 2.5f; // bigger increase in distance = better
+}
+
+int argmax(const std::vector<float>& v) {
+  return (int)std::distance(v.begin(), std::max_element(v.begin(), v.end()));
+}
+
+float maxval(const std::vector<float>& v) {
+  return *std::max_element(v.begin(), v.end());
+}
+
+int epsilon_greedy_action(int s) {
+  // random in [0,1)
+  float r = (float)random(0, 10000) / 10000.0f;
+  if (r < EPSILON) {
+    // explore
+    return random(0, N_STATES); // choose any posture as action
+  } else {
+    // exploit
+    return argmax(Q_table[s]);
+  }
+}
+
+void train_one_episode() {
+  // reset to a known posture at ep start
+  moveToPosture(0); // posture 0
+  for (int t = 0; t < STEPS_PER_EP; ++t) {
+    int s = current_state;
+
+
+    float dist_now = getDistance();
+    int a = epsilon_greedy_action(s);
+
+    moveToPosture(a); // execute action -> next state is "a"
+    int s_next = current_state;
+
+    float dist_later = getDistance();
+    float r = reward_fn(dist_now, dist_later);
+
+    float qsa = Q_table[s][a];
+    float max_next = maxval(Q_table[s_next]);
+
+    // Q-update
+    Q_table[s][a] = qsa + ALPHA * (r + GAMMA * max_next - qsa);
+
+    // brief UI updatea
+    lcd.clear();
+    lcd.print("Ep step "); lcd.print(t);
+    lcd.setCursor(0,1);
+    lcd.print("r="); lcd.print(r, 2);
+  }
+}
+
+void doTraining() {
+  lcd.clear(); lcd.print("Training...");
+  Serial.println("=== TRAINING START ===");
+  for (int ep = 0; ep < EPISODES; ++ep) {
+    train_one_episode();
+    // decay epsilon
+    EPSILON = std::max(EPS_MIN, EPSILON * EPS_DEC);
+    delay(50);
+  }
+  Serial.println("=== TRAINING DONE ===");
+  lcd.clear(); lcd.print("Training Done");
+  delay(1000);
+  do_training = false;
+}
+
+void doLearnedBehavior() {
+  lcd.clear(); lcd.print("Policy Run");
+  // start where we ended, or move to a preferred start:
+  // moveToPosture(0);
+
+  while (true) {
+    int s = current_state;
+    int best_a = argmax(Q_table[s]); // purely greedy
+
+    moveToPosture(best_a);
+    // Optional: stop if stuck in a self-loop for long; here we just keep going.
+    float d = getDistance();
+    Serial.print("Greedy step -> s: "); Serial.print(best_a);
+    Serial.print("  dist: "); Serial.println(d);
+
+    // keep OTA responsive
+    ArduinoOTA.handle();
+  }
+}
+
+
 void setup()
 {
   Serial.begin(9600);
-  delay(1000);
+  delay(1000); // Give Serial Monitor time to connect
 
+  // Initialize EEPROM
   EEPROM.begin(EEPROM_SIZE);
 
+  // Read or set robot number
   robot_number = readRobotNumber();
   snprintf(ssid, sizeof(ssid), "%s%d", base_ssid, robot_number);
   snprintf(ota_hostname, sizeof(ota_hostname), "%s%d", base_ota_hostname, robot_number);
 
+  // Initialize AP and OTA
   setup_ap();
   setup_ota();
 
+  // Start OTA task
   xTaskCreatePinnedToCore(
-      otaTask,
-      "OTATask",
-      4096,
-      NULL,
-      1,
-      &otaTaskHandle,
-      1);
+      otaTask,        // Task function
+      "OTATask",      // Task name
+      4096,           // Stack size
+      NULL,           // Task parameters
+      1,              // Priority
+      &otaTaskHandle, // Task handle
+      1               // Run on core 1
+  );
 
+  // Initialize LCD
   lcd.init();
   lcd.backlight();
   lcd.clear();
@@ -234,298 +385,19 @@ void setup()
   lcd.print("Setup");
   delay(1000);
 
+  // Attach servos with min/max pulse widths
   servodown.attach(control_servo_down, 600, 2400);
   servoup.attach(control_servo_up, 600, 2400);
 
+  // Set servos to initial position
   servodown.write(0);
   servoup.write(180);
 
+  // Notify setup completion
   lcd.clear();
   lcd.print("Setup Completed");
   delay(2000);
   healthCheck();
-}
-
-#define SERVO_UP_STATES 12
-#define SERVO_DOWN_STATES 10
-#define ACTIONS_NUM (SERVO_UP_STATES + SERVO_DOWN_STATES)
-
-const int servo_up_angles[SERVO_UP_STATES] = {180, 170 , 160 , 150 , 140 , 130 , 120 , 110 , 100 , 90 , 80 , 70};
-const int servo_down_angles[SERVO_DOWN_STATES] = {0, 10 , 20 , 30 , 40 , 50, 60 , 70, 80, 90};
-
-int get_current_state()
-{
-  int up_angle = servoup.read();
-  int down_angle = servodown.read();
-
-  int up_index = 0;
-  int down_index = 0;
-
-  for (int i = 0; i < SERVO_UP_STATES; i++)
-  {
-    if (servo_up_angles[i] == up_angle)
-    {
-      up_index = i;
-      break;
-    }
-  }
-
-  for (int i = 0; i < SERVO_DOWN_STATES; i++)
-  {
-    if (servo_down_angles[i] == down_angle)
-    {
-      down_index = i;
-      break;
-    }
-  }
-
-  return up_index * SERVO_DOWN_STATES + down_index;
-}
-
-void perform_action(int action)
-{
-  if (action < SERVO_UP_STATES)
-  { // Move servoup
-    int target_angle = servo_up_angles[action];
-    Serial.printf("Moving servoup to %d degrees\n", target_angle);
-    moveServoSmooth(servoup, servoup.read(), target_angle);
-  }
-  else
-  { // Move servodown
-    int angle_index = action - SERVO_UP_STATES;
-    int target_angle = servo_down_angles[angle_index];
-    Serial.printf("Moving servodown to %d degrees\n", target_angle);
-    moveServoSmooth(servodown, servodown.read(), target_angle);
-  }
-}
-
-float q_table[SERVO_UP_STATES * SERVO_DOWN_STATES][ACTIONS_NUM];
-
-int choose_action(int state)
-{
-  if ((float)random(100) / 100.0 < EPSILON)
-  {
-    Serial.println("Action: Exploring (random)");
-    return random(ACTIONS_NUM);
-  }
-  else
-  {
-    Serial.println("Action: Exploiting (best)");
-    int best_action = 0;
-    for (int i = 0; i < ACTIONS_NUM; i++)
-    {
-      if (q_table[state][i] > q_table[state][best_action])
-      {
-        best_action = i;
-      }
-    }
-    return best_action;
-  }
-}
-
-int calculate_reward(float distance_before, float distance_after)
-{
-
-  if (distance_after > 30)
-  {
-    return 100;
-  }
-  else{
-    if (distance_after > distance_before)
-    {
-      return 25;
-    }
-    else
-    {
-      return -20;
-    }
-  }
-}
-
-void initialize_q_table()
-{
-  for (int i = 0; i < SERVO_UP_STATES * SERVO_DOWN_STATES; i++)
-  {
-    for (int j = 0; j < ACTIONS_NUM; j++)
-    {
-      q_table[i][j] = 0;
-    }
-  }
-}
-
-void update_q_table(int state, int action, float reward, int new_state)
-{
-  float max_q_new_state = -1000;
-  for (int i = 0; i < ACTIONS_NUM; i++)
-  {
-    if (q_table[new_state][i] > max_q_new_state)
-    {
-      max_q_new_state = q_table[new_state][i];
-    }
-  }
-
-  q_table[state][action] += ALPHA * (reward + GAMMA * max_q_new_state - q_table[state][action]);
-}
-
-bool done_exploration = false;
-bool done_training = false;
-
-void explore_all_states(int exploration_steps = 3)
-{
-  Serial.println("Starting exploration phase...");
-  lcd.clear();
-  lcd.print("Exploring States");
-
-  initialize_q_table();
-  Serial.println("Q-table initialized for exploration");
-
-  for (int step = 0; step < exploration_steps; step++)
-  {
-    moveServoSmooth(servoup, servoup.read(), 180);
-    moveServoSmooth(servodown, servodown.read(), 0);
-    delay(200);
-
-    for (int up_idx = 0; up_idx < SERVO_UP_STATES; up_idx++)
-    {
-      for (int down_idx = 0; down_idx < SERVO_DOWN_STATES; down_idx++)
-      {
-        // UP servo 
-        int state_before_up_move = get_current_state();
-        int current_up_angle = servoup.read();
-        int target_up_angle = servo_up_angles[up_idx];
-
-        if (current_up_angle != target_up_angle) {
-            float distance_before = getDistance();
-            
-            int action_to_perform = up_idx; 
-            
-            perform_action(action_to_perform); 
-            delay(50); 
-            
-            float distance_after = getDistance();
-            int new_state = get_current_state();
-            float reward = max(0.0f, calculate_reward(distance_before, distance_after));
-
-            update_q_table(state_before_up_move, action_to_perform, reward, new_state);
-            Serial.printf("Explore (UP): s:%d, a:%d -> s':%d, r:%.1f\n", state_before_up_move, action_to_perform, new_state, reward);
-        }
-
-        // DOWN servo
-        int state_before_down_move = get_current_state();
-        int current_down_angle = servodown.read();
-        int target_down_angle = servo_down_angles[down_idx];
-
-        if (current_down_angle != target_down_angle) {
-            float distance_before = getDistance();
-
-            int action_to_perform = SERVO_UP_STATES + down_idx;
-
-            perform_action(action_to_perform);
-            delay(50); 
-
-            float distance_after = getDistance();
-            int new_state = get_current_state();
-            float reward = max(0.0f, calculate_reward(distance_before, distance_after));
-
-            update_q_table(state_before_down_move, action_to_perform, reward, new_state);
-            Serial.printf("Explore (DOWN): s:%d, a:%d -> s':%d, r:%.1f\n", state_before_down_move, action_to_perform, new_state, reward);
-        }
-      }
-    }
-  }
-
-  Serial.println("Exploration phase completed");
-  lcd.clear();
-  lcd.print("Exploration Done");
-  delay(1000);
-  done_exploration = true;
-}
-
-void do_training(int epochs, int steps_per_epoch)
-{
-  const int NUM_STATES = SERVO_UP_STATES * SERVO_DOWN_STATES;
-  const int NUM_ACTIONS = ACTIONS_NUM;
-
-  Serial.printf("Training with %d epochs and %d steps per episode\n", epochs, steps_per_epoch);
-
-  lcd.clear();
-  lcd.print("Training...");
-
-  for (int epoch = 0; epoch < epochs; epoch++)
-  {
-    Serial.printf("Epoch %d/%d\n", epoch + 1, epochs);
-    lcd.setCursor(0, 1);
-    lcd.printf("Epoch %d/%d", epoch + 1, epochs);
-
-    for (int step = 0; step < steps_per_epoch; step++)
-    {
-      int state = get_current_state();
-
-      float distance_before = getDistance();
-
-      int action = choose_action(state);
-      perform_action(action);
-
-      delay(100);
-      float distance_after = getDistance();
-
-      float reward = calculate_reward(distance_before, distance_after);
-      int new_state = get_current_state();
-      update_q_table(state, action, reward, new_state);
-
-      Serial.printf("Step %d: State: %d->%d, Action: %d, Reward: %.2f\n",
-                    step + 1, state, new_state, action, reward);
-    }
-  }
-  Serial.println("Training completed.");
-  lcd.clear();
-  lcd.print("Training Done");
-  delay(1000);
-  done_training = true;
-}
-
-void do_action_after_training()
-{
-  int state = get_current_state();
-  Serial.printf("Current state after training: %d\n", state);
-  
-  Serial.println("Q-values for current state:");
-  for (int i = 0; i < ACTIONS_NUM; i++)
-  {
-    Serial.printf("Action %d: %.3f\n", i, q_table[state][i]);
-  }
-
-  int best_action = 0;
-  float best_q_value = q_table[state][0];
-  for (int i = 0; i < ACTIONS_NUM; i++)
-  {
-    if (q_table[state][i] > best_q_value)
-    {
-      best_action = i;
-      best_q_value = q_table[state][i];
-    }
-  }
-
-  Serial.printf("Performing best action: %d with Q-value: %.3f\n", best_action, best_q_value);
-  
-  // Display what this action will do
-  if (best_action < SERVO_UP_STATES)
-  {
-    Serial.printf("This will move servo UP to %d degrees\n", servo_up_angles[best_action]);
-  }
-  else
-  {
-    int angle_index = best_action - SERVO_UP_STATES;
-    Serial.printf("This will move servo DOWN to %d degrees\n", servo_down_angles[angle_index]);
-  }
-  
-  // Measure distance before action
-  float distance_before = getDistance();
-  Serial.printf("Distance before action: %.2f cm\n", distance_before);
-  
-  perform_action(best_action);
-  
-  delay(500); 
 }
 
 void loop()
@@ -534,33 +406,16 @@ void loop()
   lcd.print("Robot ");
   lcd.print(robot_number);
   lcd.setCursor(0, 1);
+  lcd.print("Main Loop");
+  delay(1000); // Reduced delay to minimize blocking
+  // TODO: Implement your main loop logic here
 
-  if (!done_exploration)
+  if (do_training)
   {
-    lcd.print("Need Exploration");
-    delay(500);
-    explore_all_states(3);
-  }
-  else if (!done_training)
-  {
-    lcd.print("Need Training");
-    delay(500);
-    do_training(16, 16);
-    servodown.write(0);
-    servoup.write(180);
+    doTraining();
   }
   else
   {
-    int random_state = random(SERVO_UP_STATES * SERVO_DOWN_STATES);
-    int up_index = random_state / SERVO_DOWN_STATES;
-    int down_index = random_state % SERVO_DOWN_STATES;
-    moveServoSmooth(servoup, servoup.read(), servo_up_angles[up_index]);
-    moveServoSmooth(servodown, servodown.read(), servo_down_angles[down_index]);
-    lcd.clear();
-    lcd.print("Using Learned");
-    delay(500);
-    do_action_after_training();
+    doLearnedBehavior();
   }
-
-  delay(500);
 }

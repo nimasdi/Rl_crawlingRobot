@@ -31,9 +31,13 @@ uint8_t robot_number = 0;
 
 TaskHandle_t otaTaskHandle = NULL;
 
-#define EPSILON 0.3
+#define EPSILON_START 0.9
+#define EPSILON_END 0.01
+#define EPSILON_DECAY 0.995
 #define ALPHA 0.3
 #define GAMMA 0.9
+
+float current_epsilon = EPSILON_START;
 
 void saveRobotNumber(uint8_t number)
 {
@@ -246,12 +250,12 @@ void setup()
   healthCheck();
 }
 
-#define SERVO_UP_STATES 7
-#define SERVO_DOWN_STATES 5
+#define SERVO_UP_STATES 4
+#define SERVO_DOWN_STATES 3
 #define ACTIONS_NUM (SERVO_UP_STATES + SERVO_DOWN_STATES)
 
-const int servo_up_angles[SERVO_UP_STATES] = {180, 162, 144, 126, 108, 90, 72};
-const int servo_down_angles[SERVO_DOWN_STATES] = {0, 22, 44, 66, 88};
+const int servo_up_angles[SERVO_UP_STATES] = {180, 144, 126, 108};
+const int servo_down_angles[SERVO_DOWN_STATES] = {0, 66, 88};
 
 int get_current_state()
 {
@@ -303,7 +307,7 @@ float q_table[SERVO_UP_STATES * SERVO_DOWN_STATES][ACTIONS_NUM];
 
 int choose_action(int state)
 {
-  if ((float)random(100) / 100.0 < EPSILON)
+  if ((float)random(100) / 100.0 < current_epsilon)
   {
     Serial.println("Action: Exploring (random)");
     return random(ACTIONS_NUM);
@@ -312,7 +316,7 @@ int choose_action(int state)
   {
     Serial.println("Action: Exploiting (best)");
     int best_action = 0;
-    for (int i = 1; i < ACTIONS_NUM; i++)
+    for (int i = 0; i < ACTIONS_NUM; i++)
     {
       if (q_table[state][i] > q_table[state][best_action])
       {
@@ -323,23 +327,33 @@ int choose_action(int state)
   }
 }
 
+void decay_epsilon()
+{
+  current_epsilon *= EPSILON_DECAY;
+  if (current_epsilon < EPSILON_END)
+  {
+    current_epsilon = EPSILON_END;
+  }
+  Serial.printf("Epsilon decayed to: %.4f\n", current_epsilon);
+}
+
 int calculate_reward(float distance_before, float distance_after)
 {
-  if (distance_after < 0)
-  {
-    return -100;
-  }
 
-  if (distance_after < distance_before)
+  if (distance_after > 30)
   {
-    return 25;
+    return 100;
   }
-  else if (distance_after > distance_before)
-  {
-    return -10;
+  else{
+    if (distance_after > distance_before)
+    {
+      return 25;
+    }
+    else
+    {
+      return -20;
+    }
   }
-
-  return -2;
 }
 
 void initialize_q_table()
@@ -367,52 +381,7 @@ void update_q_table(int state, int action, float reward, int new_state)
   q_table[state][action] += ALPHA * (reward + GAMMA * max_q_new_state - q_table[state][action]);
 }
 
-bool done_exploration = false;
 bool done_training = false;
-
-void explore_all_states(int exploreation_steps = 3)
-{
-  Serial.println("Starting exploration phase - visiting all states...");
-  lcd.clear();
-  lcd.print("Exploring States");
-
-  initialize_q_table();
-  Serial.println("Q-table initialized for exploration");
-
-  for (int i = 0; i < exploration_steps; i++)
-  {
-    for (int up_idx = 0; up_idx < SERVO_UP_STATES; up_idx++)
-    {
-      for (int down_idx = 0; down_idx < SERVO_DOWN_STATES; down_idx++)
-      {
-        int current_state = get_current_state();
-        float distance_before = getDistance();
-        
-        Serial.printf("Moving to state: up_idx=%d, down_idx=%d\n", up_idx, down_idx);
-
-        moveServoSmooth(servoup, servoup.read(), servo_up_angles[up_idx]);
-        moveServoSmooth(servodown, servodown.read(), servo_down_angles[down_idx]);
-
-        float distance_after = getDistance();
-        int new_state = get_current_state();
-        
-        float reward = calculate_reward(distance_before, distance_after); 
-        update_q_table(current_state, 0, reward, new_state);
-        
-        Serial.printf("Exploration - State %d->%d: Distance = %.2f cm, Reward = %.2f\n", 
-                      current_state, new_state, distance_after, reward);
-
-        delay(200);
-      }
-    }
-  }
-
-  Serial.println("Exploration phase completed");
-  lcd.clear();
-  lcd.print("Exploration Done");
-  delay(1000);
-  done_exploration = true;
-}
 
 void do_training(int epochs, int steps_per_epoch)
 {
@@ -420,6 +389,9 @@ void do_training(int epochs, int steps_per_epoch)
   const int NUM_ACTIONS = ACTIONS_NUM;
 
   Serial.printf("Training with %d epochs and %d steps per episode\n", epochs, steps_per_epoch);
+
+  initialize_q_table();
+  Serial.println("Q-table initialized for training");
 
   lcd.clear();
   lcd.print("Training...");
@@ -446,9 +418,12 @@ void do_training(int epochs, int steps_per_epoch)
       int new_state = get_current_state();
       update_q_table(state, action, reward, new_state);
 
-      Serial.printf("Step %d: State: %d->%d, Action: %d, Reward: %.2f\n",
-                    step + 1, state, new_state, action, reward);
+      Serial.printf("Step %d: State: %d->%d, Action: %d, Reward: %.2f, Epsilon: %.4f\n",
+                    step + 1, state, new_state, action, reward, current_epsilon);
     }
+    
+    // Decay epsilon after each epoch
+    decay_epsilon();
   }
   Serial.println("Training completed.");
   lcd.clear();
@@ -470,7 +445,7 @@ void do_action_after_training()
 
   int best_action = 0;
   float best_q_value = q_table[state][0];
-  for (int i = 1; i < ACTIONS_NUM; i++)
+  for (int i = 0; i < ACTIONS_NUM; i++)
   {
     if (q_table[state][i] > best_q_value)
     {
@@ -508,15 +483,9 @@ void loop()
   lcd.print(robot_number);
   lcd.setCursor(0, 1);
 
-  if (!done_exploration)
+  if (!done_training)
   {
-    lcd.print("Need Exploration");
-    delay(500);
-    explore_all_states(3);
-  }
-  else if (!done_training)
-  {
-    lcd.print("Need Training");
+    lcd.print("Training...");
     delay(500);
     do_training(16, 16);
     servodown.write(0);
