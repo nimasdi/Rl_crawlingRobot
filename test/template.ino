@@ -229,7 +229,7 @@ int current_state = 0;
 
 
 // ======== Discrete “states” (servo postures) ========
-struct Posture { uint8_t down; uint8_t up; };
+struct Posture { uint8_t down; uint8_t up; }; 
 std::vector<Posture> states = {
   {0, 180},
   {66, 144},
@@ -247,8 +247,8 @@ void moveToPosture(int to_idx) {
   Posture to   = states[to_idx];
   moveServoSmooth(servoup, from.down, to.down);
   moveServoSmooth(servodown,   from.up,   to.up);
-  delay(SETTLE_MS);
-  current_state = to_idx;
+  delay(50ms);
+  current_state = to_idx; 
 }
 
 float reward_fn(float dist_now, float dist_later) {
@@ -286,7 +286,6 @@ void train_one_episode() {
   moveToPosture(0); // posture 0
   for (int t = 0; t < STEPS_PER_EP; ++t) {
     int s = current_state;
-
 
     float dist_now = getDistance();
     int a = epsilon_greedy_action(s);
@@ -341,8 +340,6 @@ void doLearnedBehavior() {
     Serial.print("Greedy step -> s: "); Serial.print(best_a);
     Serial.print("  dist: "); Serial.println(d);
 
-    // keep OTA responsive
-    ArduinoOTA.handle();
   }
 }
 
