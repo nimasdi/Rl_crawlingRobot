@@ -227,7 +227,6 @@ bool do_training = true;
 int current_state = 0;
 
 
-// ======== Discrete “states” (servo postures) ========
 struct Posture { uint8_t down; uint8_t up; }; 
 std::vector<Posture> states = {
   {180, 90},
@@ -282,11 +281,11 @@ void moveToPosture(int to_idx) {
 }
 
 float reward_fn(float dist_now, float dist_later) {
-  if (dist_now < 0 || dist_later < 0) { // invalid read
-    return -2.0f; // penalize sensor failure
+  if (dist_now < 0 || dist_later < 0) { 
+    return -2.0f; 
   }
   if (fabs(dist_later - dist_now) < 1e-3) {
-    return -1.0f; // penalize no change
+    return -1.0f; // no change
   }
   return (dist_later - dist_now) * 2.5f; // bigger increase in distance = better
 }
@@ -300,11 +299,10 @@ float maxval(const vector<float>& v) {
 }
 
 int epsilon_greedy_action(int s) {
-  // random in [0,1)
   float r = (float)random(0, 10000) / 10000.0f;
   if (r < EPSILON) {
     // explore
-    return random(0, N_STATES); // choose any posture as action
+    return random(0, N_STATES); 
   } else {
     // exploit
     return argmax(Q_table[s]);
@@ -312,8 +310,9 @@ int epsilon_greedy_action(int s) {
 }
 
 void train_one_episode() {
-  // reset to a known posture at ep start
-  moveToPosture(0); // posture 0
+  
+  moveToPosture(0); 
+
   for (int t = 0; t < STEPS_PER_EP; ++t) {
     int s = current_state;
 
@@ -329,10 +328,8 @@ void train_one_episode() {
     float qsa = Q_table[s][a];
     float max_next = maxval(Q_table[s_next]);
 
-    // Q-update
     Q_table[s][a] = qsa + ALPHA * (r + GAMMA * max_next - qsa);
 
-    // brief UI updatea
     lcd.clear();
     lcd.print("action "); lcd.print(a);
     lcd.setCursor(0,1);
@@ -344,8 +341,9 @@ void doTraining() {
   lcd.clear(); lcd.print("Training...");
   Serial.println("=== TRAINING START ===");
   for (int ep = 0; ep < EPISODES; ++ep) {
+
     train_one_episode();
-    // decay epsilon
+
     EPSILON = max(EPS_MIN, EPSILON * EPS_DEC);
     delay(50);
   }
@@ -357,15 +355,13 @@ void doTraining() {
 
 void doLearnedBehavior() {
   lcd.clear(); lcd.print("Policy Run");
-  // start where we ended, or move to a preferred start:
   // moveToPosture(0);
 
   while (true) {
     int s = current_state;
-    int best_a = argmax(Q_table[s]); // purely greedy
+    int best_a = argmax(Q_table[s]);
 
     moveToPosture(best_a);
-    // Optional: stop if stuck in a self-loop for long; here we just keep going.
     float d = getDistance();
     Serial.print("Greedy step -> s: "); Serial.print(best_a);
     Serial.print("  dist: "); Serial.println(d);
